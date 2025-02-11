@@ -1,0 +1,63 @@
+{
+    "name": "risetechapps/token-security-for-laravel",
+    "description": "",
+    "keywords": [
+        "risetechapps",
+        "token",
+        "security"
+    ],
+    "homepage": "https://github.com/risetechapps/token-security-for-laravel",
+    "license": "MIT",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Rise Tech",
+            "email": "apps@risetech.com.br",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "illuminate/support": "^9.0|^10.0",
+        "risetechapps/monitoring-for-laravel": "^1.0"
+
+    },
+    "require-dev": {
+        "orchestra/testbench": "^7.0|^8.0",
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "RiseTechApps\\TokenSecurity\\": "src"
+        },
+        "files": [
+            "/src/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "RiseTechApps\\TokenSecurity\\Tests\\": "tests"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage"
+
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "RiseTechApps\\TokenSecurity\\TokenSecurityServiceProvider"
+            ],
+            "aliases": {
+                "TokenSecurity": "RiseTechApps\\TokenSecurity\\TokenSecurityFacade"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "version": "1.0"
+}
