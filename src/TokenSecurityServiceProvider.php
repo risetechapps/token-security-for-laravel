@@ -30,8 +30,6 @@ class TokenSecurityServiceProvider extends ServiceProvider
             return new TokenSecurity;
         });
 
-        if (file_exists(base_path('config/token-security.php'))) {
-            $this->mergeConfigFrom(__DIR__ . '/../config/config.php', 'token-security');
-        }
+        $this->mergeConfigFrom(__DIR__ . '/../config/config.php', 'token-security');
     }
 }
