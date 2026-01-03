@@ -1,0 +1,74 @@
+{
+    "name": "risetechapps/token-security-for-laravel",
+    "description": "Sistema de gerenciamento de token de segurança",
+    "keywords": [
+        "risetechapps",
+        "token",
+        "security"
+    ],
+    "homepage": "https://github.com/risetechapps/token-security-for-laravel",
+    "license": "MIT",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Rise Tech",
+            "email": "apps@risetech.com.br",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "guzzlehttp/guzzle": "^7.10",
+        "illuminate/support": "^12",
+        "laravel/vonage-notification-channel": "^3.3",
+        "pragmarx/google2fa-laravel": "^2.3",
+        "pragmarx/recovery": "^0.2.1"
+    },
+    "require-dev": {
+        "fakerphp/faker": "^1.23",
+        "laravel/pail": "^1.2.2",
+        "laravel/pint": "^1.24",
+        "laravel/sail": "^1.41",
+        "mockery/mockery": "^1.6",
+        "nunomaduro/collision": "^8.6",
+        "pestphp/pest": "^4.1",
+        "pestphp/pest-plugin-laravel": "^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "RiseTechApps\\TokenSecurity\\": "src"
+        },
+        "files": [
+            "/src/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "RiseTechApps\\TokenSecurity\\Tests\\": "tests"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage"
+
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": false
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "RiseTechApps\\TokenSecurity\\TokenSecurityServiceProvider"
+            ],
+            "aliases": {
+                "TokenSecurity": "RiseTechApps\\TokenSecurity\\TokenSecurityFacade"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "version": "1.0.0"
+}
