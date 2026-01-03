@@ -21,8 +21,8 @@
 
 Certifique-se de que seu projeto atende aos seguintes requisitos:
 
-- PHP >= 8.0  
-- Laravel >= 10  
+- PHP >= 8.3  
+- Laravel >= 12  
 - Composer instalado  
 
 ### 2️⃣ Instalação do Pacote
