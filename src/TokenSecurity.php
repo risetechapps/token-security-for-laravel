@@ -61,7 +61,7 @@ class TokenSecurity
     /**
      * Centraliza a lógica de resposta/interrupção
      */
-    private function handleResponse(array $data, int $status = 418)
+    private function handleResponse(array $data, int $status = 428)
     {
         if ($this->shouldAbort) {
             abort(response()->json($data, $status));
@@ -79,6 +79,12 @@ class TokenSecurity
             if ($status === true) {
                 return true;
             }
+            if ($this->shouldAbort) {
+                abort(response()->json(['type' => Str::lower(request()->header(static::$headerOperation))], 428));
+            } else {
+                return false;
+            }
+
         }
 
         $type = $type ?? $this->authenticatable->routeNotificationPreference();
@@ -192,12 +198,11 @@ class TokenSecurity
         $code = request()->header(static::$headerCode);
         $operation = Str::lower(request()->header(static::$headerOperation));
 
-        if ($operation === 'totp') {
+        if ($operation === 'totp' || $operation === 'google2fa') {
             return $this->isValidTotp($code);
         }
 
         return DB::transaction(function () use ($code) {
-            $path = request()->path();
 
             $tokenRecord = DB::table('tokens')
                 ->where('authenticatable_id', $this->authenticatable->getKey())
@@ -243,7 +248,7 @@ class TokenSecurity
     {
         $this->google2FA ??= new Google2FA(request());
 
-        $secret = $secret ?? ($this->secret !== "" ? $this->secret : $this->authenticatable->google2fa_secret);
+        $secret = $secret ?? ($this->secret !== "" ? $this->secret : $this->authenticatable->twoFactorSecret());
 
         return $this->google2FA->verifyGoogle2FA($secret, $code);
     }
