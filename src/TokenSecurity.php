@@ -5,6 +5,8 @@ namespace RiseTechApps\TokenSecurity;
 use Carbon\Carbon;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use PragmaRX\Google2FALaravel\Google2FA;
 
@@ -15,10 +17,12 @@ class TokenSecurity
 
     protected bool $isVerified = false;
     protected bool $shouldAbort = true;
-
     protected bool $ignorePath = false;
 
-    protected Authenticatable $authenticatable;
+    protected ?Authenticatable $authenticatable = null;
+    protected ?string $manualContact = null;
+    protected ?string $manualId = null;
+
     protected ?Google2FA $google2FA = null;
     protected string $secret = "";
 
@@ -32,36 +36,42 @@ class TokenSecurity
     }
 
     /**
-     * Define se a classe deve disparar abort() ou retornar dados
+     * Define um destinatário manual (email ou celular)
      */
+    public function to(string $contact, ?string $identifier = null): static
+    {
+        $this->manualContact = $contact;
+
+        $namespace = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+        $this->manualId = $identifier ?? \Ramsey\Uuid\Uuid::uuid5($namespace, $contact)->toString();
+
+        return $this;
+    }
+
     public function setShouldAbort(bool $status): static
     {
         $this->shouldAbort = $status;
         return $this;
     }
 
-    /**
-     * Define se a validação deve ignorar o path da requisição
-     */
     public function ignorePath(bool $status = true): static
     {
         $this->ignorePath = $status;
         return $this;
     }
 
-    /**
-     * Define o segredo manualmente (usado para validação temporária/setup)
-     */
     public function setSecret(string $secret): static
     {
         $this->secret = $secret;
         return $this;
     }
 
-    /**
-     * Centraliza a lógica de resposta/interrupção
-     */
-    private function handleResponse(array $data, int $status = 428)
+    protected function getTargetId()
+    {
+        return $this->authenticatable ? $this->authenticatable->getKey() : $this->manualId;
+    }
+
+    private function handleResponse(array $data, int $status = 428): array
     {
         if ($this->shouldAbort) {
             abort(response()->json($data, $status));
@@ -70,77 +80,54 @@ class TokenSecurity
     }
 
     /**
-     * Tenta validar se houver headers, caso contrário gera um novo token
+     * Roteador principal
+     * @throws \Throwable
      */
     public function generateToken($type = null)
     {
         if (request()->hasHeader(static::$headerOperation) && request()->hasHeader(static::$headerCode)) {
-            $status = $this->isValid();
-            if ($status === true) {
+            if ($this->isValid()) {
                 return true;
             }
-            if ($this->shouldAbort) {
-                abort(response()->json(['type' => Str::lower(request()->header(static::$headerOperation))], 428));
-            } else {
-                return false;
-            }
 
+            return $this->handleResponse([
+                'type' => Str::lower(request()->header(static::$headerOperation)),
+                'error' => 'Invalid or expired token'
+            ]);
         }
 
-        $type = $type ?? $this->authenticatable->routeNotificationPreference();
+        $type = $type ?? ($this->authenticatable ? $this->authenticatable->routeNotificationPreference() : 'email');
         return $this->generate($type);
     }
 
-    public function generateTokenSms()
-    {
-        if (request()->hasHeader(static::$headerOperation) && request()->hasHeader(static::$headerCode)) {
-            return $this->isValid();
-        }
-        return $this->generate('sms');
-    }
-
-    public function generateTokenEmail()
-    {
-        if (request()->hasHeader(static::$headerOperation) && request()->hasHeader(static::$headerCode)) {
-            return $this->isValid();
-        }
-        return $this->generate('email');
-    }
-
-    public function generateTokenTotp()
-    {
-        if (request()->hasHeader(static::$headerOperation) && request()->hasHeader(static::$headerCode)) {
-            return $this->isValid();
-        }
-        return $this->generate('totp');
-    }
+    // Métodos de atalho corrigidos
+    public function generateTokenSms() { return $this->generateToken('sms'); }
+    public function generateTokenEmail() { return $this->generateToken('email'); }
+    public function generateTokenTotp() { return $this->generateToken('totp'); }
 
     /**
-     * Lógica principal de geração e armazenamento do token
+     * @throws \Throwable
      */
     protected function generate(string $type)
     {
         if ($type === 'totp') {
-            return $this->handleResponse(['uuid' => $type, 'type' => $type]);
+            return $this->handleResponse(['uuid' => 'totp', 'type' => 'totp']);
         }
 
-        $result = DB::transaction(function () use ($type) {
-            $path = request()->path();
-            $authId = $this->authenticatable->getKey();
+        $targetId = $this->getTargetId();
+        if (!$targetId) {
+            throw new \Exception("Destinatário não definido. Use ->auth() ou ->to().");
+        }
 
-            // Busca token ativo com Lock de linha
+        $result = DB::transaction(function () use ($type, $targetId) {
+            $path = request()->path();
+
             $query = DB::table('tokens')
-                ->where([
-                    'authenticatable_id' => $authId,
-                    'type' => $type,
-                ])
-                ->when(!$this->ignorePath, function ($q) {
-                    return $q->where('path', request()->path());
-                })
+                ->where('authenticatable_id', $targetId)
+                ->where('type', $type)
+                ->when(!$this->ignorePath, fn($q) => $q->where('path', $path))
                 ->whereNull('used')
-                ->where(function ($q) {
-                    $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
-                })
+                ->where('expires_at', '>', now())
                 ->lockForUpdate()
                 ->first();
 
@@ -152,7 +139,7 @@ class TokenSecurity
             $uuid = Str::uuid()->toString();
 
             DB::table('tokens')->insert([
-                'authenticatable_id' => $authId,
+                'authenticatable_id' => $targetId,
                 'type' => $type,
                 'path' => $path,
                 'uuid' => $uuid,
@@ -162,94 +149,89 @@ class TokenSecurity
                 'updated_at' => now(),
             ]);
 
-            // Envia notificação dentro da transação para garantir rollback se falhar
             $this->sendNotification($type, $token);
 
             return ['uuid' => $uuid, 'type' => $type, 'is_new' => true];
         });
 
-        $responseData = ['uuid' => $result['uuid'], 'type' => $result['type']];
-
-        if (!$result['is_new'] && $this->isVerified) {
-            $responseData['message'] = "Invalid Token";
-        }
-
-        return $this->handleResponse($responseData);
+        return $this->handleResponse(['uuid' => $result['uuid'], 'type' => $result['type']]);
     }
 
     protected function sendNotification(string $type, int|string $token): void
     {
-        $notification = match ($type) {
-            'sms' => config('token-security.notifications.sms'),
-            'email' => config('token-security.notifications.email'),
-            default => null
-        };
+        $notificationClass = config("token-security.notifications.{$type}");
+        if (!$notificationClass || !class_exists($notificationClass)) return;
 
-        if ($notification && class_exists($notification)) {
-            $this->authenticatable->notify((new $notification($token))->locale(app()->getLocale()));
+        $notification = (new $notificationClass($token))->locale(app()->getLocale());
+
+        if ($this->authenticatable) {
+            $this->authenticatable->notify($notification);
+        } elseif ($this->manualContact) {
+            $driver = ($type === 'sms') ? 'vonage' : 'mail';
+            Notification::route($driver, $this->manualContact)->notify($notification);
         }
     }
 
-    /**
-     * Valida o token recebido via Header
-     */
-    private function isValid(): bool
+    public function isValid(): bool
     {
         $code = request()->header(static::$headerCode);
         $operation = Str::lower(request()->header(static::$headerOperation));
+        $targetId = $this->getTargetId();
+
+        $key = 'otp_limit:'.$targetId.request()->ip();
+        if (RateLimiter::tooManyAttempts($key, 5)) {
+            return false;
+        }
 
         if ($operation === 'totp' || $operation === 'google2fa') {
             return $this->isValidTotp($code);
         }
 
-        return DB::transaction(function () use ($code) {
-
+        $isValid = DB::transaction(function () use ($code, $targetId) {
             $tokenRecord = DB::table('tokens')
-                ->where('authenticatable_id', $this->authenticatable->getKey())
-                ->when(!$this->ignorePath, function ($q) {
-                    return $q->where('path', request()->path());
-                })
+                ->where('authenticatable_id', $targetId)
+                ->when(!$this->ignorePath, fn($q) => $q->where('path', request()->path()))
                 ->where('token', $code)
                 ->whereNull('used')
-                ->whereNull('deleted_at')
+                ->where('expires_at', '>', now())
                 ->lockForUpdate()
                 ->first();
 
-            if (!$tokenRecord || Carbon::now()->greaterThan($tokenRecord->expires_at)) {
-                $this->isVerified = true;
+            if (!$tokenRecord) {
                 return false;
             }
 
             DB::table('tokens')->where('id', $tokenRecord->id)->update([
                 'used' => now(),
-                'deleted_at' => now(),
                 'updated_at' => now(),
             ]);
 
             return true;
         });
-    }
 
-    /* --- Google 2FA / TOTP Methods --- */
+        if (!$isValid) {
+            RateLimiter::hit($key, 60);
+        } else {
+            RateLimiter::clear($key);
+        }
 
-    public function generateSecretGoogle2FA(): string
-    {
-        $this->google2FA ??= new Google2FA(request());
-        return $this->google2FA->generateSecretKey();
-    }
-
-    public function getQrCodeUrl(string $app, string $email, string $secret)
-    {
-        $this->google2FA ??= new Google2FA(request());
-        return $this->google2FA->getQrCodeUrl($app, $email, $secret);
+        return $isValid;
     }
 
     public function isValidTotp($code, $secret = null): bool
     {
         $this->google2FA ??= new Google2FA(request());
+        $secret = $secret ?? ($this->secret ?: ($this->authenticatable ? $this->authenticatable->twoFactorSecret() : null));
+        return $secret ? $this->google2FA->verifyGoogle2FA($secret, $code) : false;
+    }
 
-        $secret = $secret ?? ($this->secret !== "" ? $this->secret : $this->authenticatable->twoFactorSecret());
+    public function generateSecretGoogle2FA(): string
+    {
+        return (new Google2FA(request()))->generateSecretKey();
+    }
 
-        return $this->google2FA->verifyGoogle2FA($secret, $code);
+    public function getQrCodeUrl(string $app, string $email, string $secret)
+    {
+        return (new Google2FA(request()))->getQrCodeUrl($app, $email, $secret);
     }
 }

@@ -78,6 +78,8 @@ public function confirmCellphone(Request $request): JsonResponse
         // caso o token seja inválido, a função lançará uma exceção HttpResponseException: abort(response()->json($data, 418));
         // caso o token seja expirado, a função lançará uma exceção HttpResponseException: abort(response()->json($data, 418));
         tokenSecurity()->auth($auth)->generateTokenSms();
+        // caso não queira passar um Authenticatable
+        tokenSecurity()->to('TELEPHONE')->generateTokenSms()
 
         return response()->json(['success' => true]);
 
@@ -111,6 +113,8 @@ public function confirmEmail(Request $request): JsonResponse
         // caso o token seja inválido, a função lançará uma exceção HttpResponseException: abort(response()->json($data, 418));
         // caso o token seja expirado, a função lançará uma exceção HttpResponseException: abort(response()->json($data, 418));
         tokenSecurity()->auth($auth)->generateTokenEmail();
+        // caso não queira passar um Authenticatable
+        tokenSecurity()->to('email@email.com')->generateTokenEmail()
 
         return response()->json(['success' => true]);
 
