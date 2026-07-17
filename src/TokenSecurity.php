@@ -96,7 +96,7 @@ class TokenSecurity
             ]);
         }
 
-        $type = $type ?? ($this->authenticatable ? $this->authenticatable->routeNotificationPreference() : 'email');
+        $type ??= $this->authenticatable ? $this->authenticatable->routeNotificationPreference() : 'email';
         return $this->generate($type);
     }
 
@@ -162,7 +162,7 @@ class TokenSecurity
         $notificationClass = config("token-security.notifications.{$type}");
         if (!$notificationClass || !class_exists($notificationClass)) return;
 
-        $notification = (new $notificationClass($token))->locale(app()->getLocale());
+        $notification = new $notificationClass($token)->locale(app()->getLocale());
 
         if ($this->authenticatable) {
             $this->authenticatable->notify($notification);
@@ -221,17 +221,17 @@ class TokenSecurity
     public function isValidTotp($code, $secret = null): bool
     {
         $this->google2FA ??= new Google2FA(request());
-        $secret = $secret ?? ($this->secret ?: ($this->authenticatable ? $this->authenticatable->twoFactorSecret() : null));
+        $secret ??= $this->secret ?: ($this->authenticatable ? $this->authenticatable->twoFactorSecret() : null);
         return $secret ? $this->google2FA->verifyGoogle2FA($secret, $code) : false;
     }
 
     public function generateSecretGoogle2FA(): string
     {
-        return (new Google2FA(request()))->generateSecretKey();
+        return new Google2FA(request())->generateSecretKey();
     }
 
     public function getQrCodeUrl(string $app, string $email, string $secret)
     {
-        return (new Google2FA(request()))->getQrCodeUrl($app, $email, $secret);
+        return new Google2FA(request())->getQrCodeUrl($app, $email, $secret);
     }
 }

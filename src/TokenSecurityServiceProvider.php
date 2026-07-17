@@ -23,12 +23,11 @@ class TokenSecurityServiceProvider extends ServiceProvider
     /**
      * Register the application services.
      */
+    #[\Override]
     public function register(): void
     {
         // Register the main class to use with the facade
-        $this->app->singleton(TokenSecurity::class, function () {
-            return new TokenSecurity;
-        });
+        $this->app->singleton(TokenSecurity::class, fn() => new TokenSecurity);
 
         $this->mergeConfigFrom(__DIR__ . '/../config/config.php', 'token-security');
     }

@@ -10,11 +10,8 @@ class TokenSmsNotification extends Notification
 {
     use Queueable;
 
-    private $token;
-
-    public function __construct($token)
+    public function __construct(private $token)
     {
-        $this->token = $token;
     }
 
     public function via($notifiable)
