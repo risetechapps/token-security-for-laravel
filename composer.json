@@ -17,7 +17,7 @@
         }
     ],
     "require": {
-        "php": "^8.3",
+        "php": "^8.4",
         "guzzlehttp/guzzle": "^7.10",
         "illuminate/support": "^12",
         "laravel/vonage-notification-channel": "^3.3",
@@ -70,5 +70,5 @@
     },
     "minimum-stability": "stable",
     "prefer-stable": true,
-    "version": "1.2.0"
+    "version": "2.0.0"
 }
