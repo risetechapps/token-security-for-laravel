@@ -110,8 +110,11 @@ class TokenSecurity
      */
     protected function generate(string $type)
     {
-        if ($type === 'totp') {
-            return $this->handleResponse(['uuid' => 'totp', 'type' => 'totp']);
+        // App autenticador: o código vem do app, não há o que gerar nem enviar.
+        // 'google2fa' é o nome usado pelo AuthFlow; antes caía no caminho de
+        // e-mail/SMS e gravava um código de 6 dígitos que ninguém recebia.
+        if ($type === 'totp' || $type === 'google2fa') {
+            return $this->handleResponse(['uuid' => 'totp', 'type' => $type]);
         }
 
         $targetId = $this->getTargetId();
@@ -135,7 +138,8 @@ class TokenSecurity
                 return ['uuid' => $query->uuid, 'type' => $query->type, 'is_new' => false];
             }
 
-            $token = mt_rand(100000, 999999);
+            // random_int: gerador criptográfico (mt_rand é previsível).
+            $token = random_int(100000, 999999);
             $uuid = Str::uuid()->toString();
 
             DB::table('tokens')->insert([
@@ -143,7 +147,9 @@ class TokenSecurity
                 'type' => $type,
                 'path' => $path,
                 'uuid' => $uuid,
-                'token' => $token,
+                // Só o hash: o código em texto puro dava acesso (por 10 min) a
+                // quem lesse a tabela. O valor enviado vai só na notificação.
+                'token' => static::hashCode($targetId, $token),
                 'expires_at' => Carbon::now()->addMinutes(10),
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -172,26 +178,64 @@ class TokenSecurity
         }
     }
 
+    /**
+     * Valida o código enviado nos headers X-OTP-*.
+     *
+     * Dois limites de tentativas erradas, valendo para TODOS os tipos de código
+     * (e-mail, SMS e TOTP):
+     *  - por destinatário + IP (curto): freia o chute em sequência;
+     *  - por destinatário, de qualquer IP (longo): freia o chute distribuído.
+     *
+     * Antes só o código de e-mail/SMS contava tentativa: o TOTP voltava direto
+     * do isValidTotp() sem registrar o erro, e o código de 6 dígitos do app
+     * autenticador podia ser chutado sem limite.
+     */
     public function isValid(): bool
     {
-        $code = request()->header(static::$headerCode);
-        $operation = Str::lower(request()->header(static::$headerOperation));
+        $code = (string) request()->header(static::$headerCode);
+        $operation = Str::lower((string) request()->header(static::$headerOperation));
         $targetId = $this->getTargetId();
 
-        $key = 'otp_limit:'.$targetId.request()->ip();
-        if (RateLimiter::tooManyAttempts($key, 5)) {
+        $ipKey = 'otp_limit:' . $targetId . ':' . request()->ip();
+        $targetKey = 'otp_limit_target:' . $targetId;
+
+        if (RateLimiter::tooManyAttempts($ipKey, (int) config('token-security.limits.per_ip', 5))
+            || RateLimiter::tooManyAttempts($targetKey, (int) config('token-security.limits.per_target', 10))) {
             return false;
         }
 
-        if ($operation === 'totp' || $operation === 'google2fa') {
-            return $this->isValidTotp($code);
+        $isValid = ($operation === 'totp' || $operation === 'google2fa')
+            ? $this->isValidTotp($code)
+            : $this->isValidStoredCode($code, $targetId);
+
+        if ($isValid) {
+            RateLimiter::clear($ipKey);
+            RateLimiter::clear($targetKey);
+        } else {
+            RateLimiter::hit($ipKey, (int) config('token-security.limits.per_ip_decay_seconds', 60));
+            RateLimiter::hit($targetKey, (int) config('token-security.limits.per_target_decay_seconds', 900));
         }
 
-        $isValid = DB::transaction(function () use ($code, $targetId) {
+        return $isValid;
+    }
+
+    /**
+     * Hash do código, amarrado ao destinatário. Com a chave da aplicação
+     * (HMAC): sem ela, 6 dígitos se descobrem por força bruta no hash.
+     */
+    protected static function hashCode($targetId, int|string $code): string
+    {
+        return hash_hmac('sha256', $targetId . '|' . trim((string) $code), (string) config('app.key'));
+    }
+
+    /** Código de e-mail/SMS gravado na tabela `tokens`: de uso único. */
+    protected function isValidStoredCode(string $code, $targetId): bool
+    {
+        return DB::transaction(function () use ($code, $targetId) {
             $tokenRecord = DB::table('tokens')
                 ->where('authenticatable_id', $targetId)
                 ->when(!$this->ignorePath, fn($q) => $q->where('path', request()->path()))
-                ->where('token', $code)
+                ->where('token', static::hashCode($targetId, $code))
                 ->whereNull('used')
                 ->where('expires_at', '>', now())
                 ->lockForUpdate()
@@ -208,14 +252,6 @@ class TokenSecurity
 
             return true;
         });
-
-        if (!$isValid) {
-            RateLimiter::hit($key, 60);
-        } else {
-            RateLimiter::clear($key);
-        }
-
-        return $isValid;
     }
 
     public function isValidTotp($code, $secret = null): bool
